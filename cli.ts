@@ -20,6 +20,8 @@ const extensions = args.slice(2).map((ext) => `.${ext}`); // Ensure each extensi
 extensions.push(".ts");
 extensions.push(".tsx");
 
+const includeAll = args.includes("--all");
+
 // Customize the separators
 const startSeparator = "===== BEGIN ";
 const endSeparator = " =====";
@@ -53,6 +55,9 @@ function isGitRepo(repoPath) {
 }
 
 function isExcluded(filePath) {
+  if (includeAll) {
+    return false;
+  }
   return standardExclusions.some((exclusion) => {
     const normalizedExclusion = path.normalize(exclusion).replace(/\\/g, "/");
     const normalizedFilePath = path.normalize(filePath).replace(/\\/g, "/");
@@ -64,6 +69,9 @@ function isExcluded(filePath) {
 }
 
 function isIncluded(filePath) {
+  if (includeAll) {
+    return true;
+  }
   return (
     customIncludes.some((inclusion) => {
       const normalizedInclusion = path.normalize(inclusion);
