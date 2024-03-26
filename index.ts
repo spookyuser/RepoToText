@@ -1,32 +1,11 @@
-import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
+import walkdir from "walkdir";
+import directoryTree from "tree-node-cli";
+import chalk from "chalk";
+import { program } from "commander";
 
-// Get the command-line arguments
-const args = process.argv.slice(2);
-
-// Check if the minimum required arguments are provided
-if (args.length < 2) {
-  console.error(
-    "Usage: node script.js <repoPath> <outputFilePath> [extensions...]"
-  );
-  process.exit(1);
-}
-
-const repoPath = args[0];
-const outputFilePath = args[1];
-
-const extensions = args.slice(2).map((ext) => `.${ext}`); // Ensure each extension starts with a dot
-extensions.push(".ts");
-extensions.push(".tsx");
-
-const includeAll = args.includes("--all");
-
-// Customize the separators
-const startSeparator = "===== BEGIN ";
-const endSeparator = " =====";
-
-// Standard exclusions
+// Configuration
 const standardExclusions = [
   "node_modules/",
   ".git/",
@@ -34,30 +13,12 @@ const standardExclusions = [
   "dist/",
   "build/",
   "*.log",
-  // Add more exclusions as needed
 ];
+const customIncludes = ["package.json", "../../README.md", "README.md"];
 
-// Custom includes
-const customIncludes = [
-  "package.json",
-  "../../README.md",
-  "README.md",
-  // Add more custom includes as needed
-];
-
-function isGitRepo(repoPath) {
-  try {
-    fs.accessSync(path.join(repoPath, ".git"), fs.constants.F_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function isExcluded(filePath) {
-  if (includeAll) {
-    return false;
-  }
+// Function to check if a file path is excluded
+function isExcluded(filePath: string): boolean {
+  if (program.includeAll) return false;
   return standardExclusions.some((exclusion) => {
     const normalizedExclusion = path.normalize(exclusion).replace(/\\/g, "/");
     const normalizedFilePath = path.normalize(filePath).replace(/\\/g, "/");
@@ -68,100 +29,84 @@ function isExcluded(filePath) {
   });
 }
 
-function isIncluded(filePath) {
-  if (includeAll) {
-    return true;
-  }
+// Function to check if a file path is included
+function isIncluded(filePath: string): boolean {
+  if (program.includeAll) return true;
   return (
     customIncludes.some((inclusion) => {
       const normalizedInclusion = path.normalize(inclusion);
       const normalizedFilePath = path.normalize(filePath);
       return normalizedFilePath.includes(normalizedInclusion);
-    }) || extensions.some((ext) => filePath.endsWith(ext))
+    }) || program.extensions.some((ext: string) => filePath.endsWith(ext))
   );
 }
 
-function listFiles(dir, fileList = []) {
-  const files = fs.readdirSync(dir);
-  files.forEach((file) => {
-    const filePath = path.join(dir, file);
-    if (fs.statSync(filePath).isDirectory()) {
-      listFiles(filePath, fileList);
-    } else {
-      fileList.push(filePath.replace(`${repoPath}/`, ""));
-    }
-  });
-  return fileList;
+// Function to process and write file content to the output file
+function processFileContent(filePath: string): void {
+  const fileContent = fs.readFileSync(
+    path.join(program.repoPath, filePath),
+    "utf-8"
+  );
+  const separator = `${chalk.bgBlue(
+    `===== BEGIN ${filePath} =====`
+  )}\n${fileContent}\n${chalk.bgBlue(`===== END ${filePath} =====`)}\n\n`;
+  fs.appendFileSync(program.outputFilePath, separator);
 }
 
-function getTrackedFiles() {
-  const output = execSync("git ls-files", { cwd: repoPath, encoding: "utf-8" });
-  return output.split("\n").filter((file) => file.trim() !== "");
-}
+// Main function
+function main(): void {
+  program
+    .version("1.0.0")
+    .description("Convert a repository to a text file")
+    .option(
+      "-r, --repo-path <repoPath>",
+      "Path to the repository",
+      path.resolve,
+      process.cwd()
+    )
+    .option(
+      "-o, --output-file-path <outputFilePath>",
+      "Path to the output file",
+      path.resolve,
+      path.join(process.cwd(), "output.txt")
+    )
+    .option("-e, --extensions <extensions...>", "File extensions to include", [
+      ".ts",
+      ".tsx",
+    ])
+    .option("-a, --include-all", "Include all files and directories")
+    .parse(process.argv);
 
-function getAllFiles() {
-  if (isGitRepo(repoPath)) {
-    return getTrackedFiles();
-  } else {
-    return listFiles(repoPath).filter(
-      (file) => !isExcluded(file) || isIncluded(file)
-    );
-  }
-}
-
-const allFiles = getAllFiles();
-const fileTree = generateFileTree(allFiles);
-
-fs.writeFileSync(outputFilePath, "File Tree:\n");
-printFileTree(fileTree);
-fs.appendFileSync(outputFilePath, "\n\n");
-
-// Adjusted to consider configurable extensions
-allFiles.forEach((filePath) => {
-  if (isIncluded(filePath)) {
-    const fileContent = fs.readFileSync(path.join(repoPath, filePath), "utf-8");
-    const separator = `${startSeparator}${filePath}${endSeparator}\n${fileContent}\n\n`;
-    fs.appendFileSync(outputFilePath, separator);
-  }
-});
-function printFileTree(fileTree, indent = "", isLast = true) {
-  const keys = Object.keys(fileTree);
-  const lastIndex = keys.length - 1;
-
-  keys.forEach((key, index) => {
-    const isLastItem = index === lastIndex;
-    const treeItem = isLastItem ? "└─ " : "├─ ";
-    const subIndent = isLast ? "   " : "│  ";
-
-    if (fileTree[key] === true) {
-      // Print leaf nodes (files)
-      fs.appendFileSync(outputFilePath, `${indent}${treeItem}${key}\n`);
-    } else {
-      // Print directories
-      fs.appendFileSync(outputFilePath, `${indent}${treeItem}${key}\n`);
-      printFileTree(fileTree[key], indent + subIndent, isLastItem);
-    }
-  });
-}
-
-function generateFileTree(files) {
-  const fileTree = {};
-
-  files.forEach((file) => {
-    if (!isExcluded(file) || isIncluded(file)) {
-      const parts = file.split(path.sep);
-      let currentLevel = fileTree;
-
-      parts.forEach((part, index) => {
-        if (index === parts.length - 1) {
-          currentLevel[part] = true; // Use `true` instead of `null` for leaf nodes
-        } else {
-          currentLevel[part] = currentLevel[part] || {};
-          currentLevel = currentLevel[part];
-        }
-      });
-    }
+  // Generate the file tree
+  const tree = directoryTree(program.repoPath, {
+    exclude: standardExclusions,
+    attributes: ["size", "type", "extension"],
+    depth: program.includeAll ? undefined : 1,
   });
 
-  return fileTree;
+  // Write the file tree to the output file
+  fs.writeFileSync(
+    program.outputFilePath,
+    chalk.bold.underline("File Tree:\n")
+  );
+  fs.appendFileSync(program.outputFilePath, tree.toString());
+  fs.appendFileSync(program.outputFilePath, "\n\n");
+
+  // Walk through the directory and process files
+  walkdir(program.repoPath, {
+    no_recurse: !program.includeAll,
+    track_inodes: true,
+    followLinks: false,
+  })
+    .on("file", (filePath: string) => {
+      if (isIncluded(filePath)) {
+        processFileContent(filePath);
+      }
+    })
+    .on("end", () => {
+      console.log(chalk.green("Processing completed!"));
+    });
 }
+
+// Run the main function
+main();
